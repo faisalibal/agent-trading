@@ -11,6 +11,8 @@ const { cancelStaleOrders } = require("./positionManager");
 const DailyLossLimit = require("./dailyLossLimit");
 const CircuitBreaker = require("./circuitBreaker");
 const Logger = require("./logger");
+const DecisionHistory = require("./decisionHistory");
+const decisionHistory = new DecisionHistory(50, 60); // Keep up to 50 decisions, max 60 minutes old
 const config = require("./config");
 
 const logger = new Logger();
@@ -140,6 +142,11 @@ async function tradingJob(isAlertTriggered = false) {
     marketData.volatility = volatility;
     marketData.isAlertTriggered = isAlertTriggered;
 
+    // Add decision history context
+    marketData.decisionHistory = decisionHistory.formatForPrompt();
+    marketData.consecutiveHolds = decisionHistory.getConsecutiveHolds();
+    marketData.lastAction = decisionHistory.getLastAction();
+
     const prompt = gemini.buildPrompt(marketData);
     const decision = await gemini.getDecision(prompt);
     if (!decision) {
@@ -150,6 +157,10 @@ async function tradingJob(isAlertTriggered = false) {
 
     const validated = validateDecision(decision, marketData, config.trading);
     logger.info("Validated decision", validated);
+
+    // Save decision to history
+    const currentPrice = marketData.lastPrice;
+    decisionHistory.addDecision(validated, currentPrice, validated.reason);
 
     if (
       (validated.action === "BUY" || validated.action === "SELL") &&
@@ -164,7 +175,18 @@ async function tradingJob(isAlertTriggered = false) {
         config.trading.leverage,
       );
       if (quantity > 0) {
-        await orderExecutor.executeDecision(validated, quantity);
+        // Pass smart order execution options
+        const executionOptions = {
+          useLimitOrder: config.trading.useLimitOrder,
+          limitTimeout: config.trading.limitTimeout,
+          limitPriceOffset: config.trading.limitPriceOffset,
+        };
+
+        await orderExecutor.executeDecision(
+          validated,
+          quantity,
+          executionOptions,
+        );
         await sendNotification(
           `🚀 Order executed: ${validated.action} ${quantity} at ${validated.entry_price}`,
         );
@@ -217,6 +239,54 @@ setInterval(async () => {
     // Silent fail for monitoring, don't spam logs
   }
 }, 30 * 1000);
+
+// Position monitoring - check if position was closed (TP/SL hit)
+let lastKnownPosition = null;
+setInterval(async () => {
+  try {
+    const currentPosition = await orderExecutor.syncPosition();
+
+    // Detect position close
+    if (lastKnownPosition && !currentPosition) {
+      // Position was closed!
+      const ticker = await binanceClient.getTicker(config.trading.symbol);
+      const closePrice = ticker.last;
+
+      // Calculate PnL
+      const entryPrice = lastKnownPosition.entryPrice;
+      const pnlPercent =
+        lastKnownPosition.side === "long"
+          ? ((closePrice - entryPrice) / entryPrice) *
+            100 *
+            config.trading.leverage
+          : ((entryPrice - closePrice) / entryPrice) *
+            100 *
+            config.trading.leverage;
+
+      // Determine close reason
+      let closeReason = "Position closed";
+      if (closePrice >= lastKnownPosition.takeProfit - 1) {
+        closeReason = "Take Profit hit ✅";
+      } else if (closePrice <= lastKnownPosition.stopLoss + 1) {
+        closeReason = "Stop Loss hit ❌";
+      }
+
+      // Record to decision history
+      decisionHistory.addPositionClose(closePrice, closeReason, pnlPercent);
+
+      logger.info(
+        `Position closed: ${closeReason} at $${closePrice}, PnL: ${pnlPercent.toFixed(2)}%`,
+      );
+      await sendNotification(
+        `${closeReason}\nClose: $${closePrice}\nPnL: ${pnlPercent > 0 ? "+" : ""}${pnlPercent.toFixed(2)}%`,
+      );
+    }
+
+    lastKnownPosition = currentPosition;
+  } catch (error) {
+    // Silent fail
+  }
+}, 30 * 1000); // Check every 30 seconds
 
 // Regular trading cycle every 3 minutes (reduced from 5)
 setInterval(() => tradingJob(false), 3 * 60 * 1000);

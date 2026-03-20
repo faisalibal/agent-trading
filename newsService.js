@@ -1,10 +1,35 @@
 const axios = require("axios");
+const config = require("./config");
 
 class NewsService {
   constructor() {
     this.newsCache = [];
     this.lastFetch = 0;
     this.cacheDuration = 10 * 60 * 1000; // 10 minutes cache
+
+    // Extract coin name from trading symbol (e.g., BTCUSDT -> BTC, SOLUSDT -> SOL)
+    this.tradingCoin = config.trading.symbol
+      .replace("USDT", "")
+      .replace("/", "");
+    this.coinKeywords = this.getCoinKeywords(this.tradingCoin);
+  }
+
+  getCoinKeywords(coin) {
+    // Map coin symbols to common keywords in news
+    const coinMap = {
+      BTC: ["bitcoin", "btc"],
+      ETH: ["ethereum", "eth", "ether"],
+      SOL: ["solana", "sol"],
+      BNB: ["binance coin", "bnb"],
+      ADA: ["cardano", "ada"],
+      DOGE: ["dogecoin", "doge"],
+      XRP: ["ripple", "xrp"],
+      MATIC: ["polygon", "matic"],
+      AVAX: ["avalanche", "avax"],
+      DOT: ["polkadot", "dot"],
+    };
+
+    return coinMap[coin] || [coin.toLowerCase()];
   }
 
   async getLatestNews() {
@@ -155,14 +180,15 @@ class NewsService {
               .replace(/<\/(?:pubDate|published)>/, "")
           : new Date().toISOString();
 
-        // Filter for Bitcoin/crypto related news
-        if (
-          title.toLowerCase().includes("bitcoin") ||
-          title.toLowerCase().includes("btc") ||
-          title.toLowerCase().includes("crypto") ||
-          title.toLowerCase().includes("ethereum") ||
-          title.toLowerCase().includes("market")
-        ) {
+        // Filter for relevant crypto news
+        const lowerTitle = title.toLowerCase();
+        const isRelevant =
+          this.coinKeywords.some((keyword) => lowerTitle.includes(keyword)) ||
+          lowerTitle.includes("crypto") ||
+          lowerTitle.includes("market") ||
+          lowerTitle.includes("bitcoin"); // BTC affects all markets
+
+        if (isRelevant) {
           items.push({
             title: title,
             published_at: pubDate,

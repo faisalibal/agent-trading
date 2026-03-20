@@ -19,6 +19,10 @@ module.exports = {
     useHigherTimeframe: process.env.USE_HIGHER_TIMEFRAME === "true",
     atrPeriod: parseInt(process.env.ATR_PERIOD) || 14,
     maxDailyLossPercent: parseFloat(process.env.MAX_DAILY_LOSS_PERCENT) || 0.05,
+    // Smart Order Execution
+    useLimitOrder: process.env.USE_LIMIT_ORDER !== "false", // Default: true
+    limitTimeout: parseInt(process.env.LIMIT_TIMEOUT) || 30000, // 30 seconds
+    limitPriceOffset: parseFloat(process.env.LIMIT_PRICE_OFFSET) || 0.0005, // 0.05%
   },
   telegram: {
     token: process.env.TELEGRAM_BOT_TOKEN,

@@ -4,7 +4,14 @@
   "description": "AI-powered crypto trading bot for Binance Futures with advanced risk management",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js"
+    "start": "node index.js",
+    "test": "node tests/test-binance-api.js",
+    "test:orders": "node tests/test-binance-api.js --with-orders",
+    "test:tpsl": "node tests/manual-test-tpsl.js",
+    "test:monitoring": "node tests/test-bot-monitoring.js",
+    "test:ai": "node tests/test-ai-with-position.js",
+    "test:smart": "node tests/test-smart-order.js",
+    "cleanup": "node tests/cleanup-position.js"
   },
   "dependencies": {
     "@google/genai": "^1.46.0",

@@ -128,7 +128,24 @@ class BinanceClient {
   }
 
   async getOpenOrders(symbol) {
-    return await this.exchange.fetchOpenOrders(symbol);
+    try {
+      // Use direct fapi endpoint to avoid SAPI issue on testnet
+      const response = await this.exchange.fapiPrivateGetOpenOrders({
+        symbol: symbol.replace("/", ""),
+      });
+      return response.map((order) => ({
+        id: order.orderId.toString(),
+        symbol: symbol,
+        type: order.type.toLowerCase(),
+        side: order.side.toLowerCase(),
+        price: parseFloat(order.price),
+        amount: parseFloat(order.origQty),
+        status: order.status.toLowerCase(),
+      }));
+    } catch (error) {
+      console.error("getOpenOrders error:", error.message);
+      return [];
+    }
   }
 
   async getPositions(symbol) {
@@ -175,39 +192,127 @@ class BinanceClient {
   }
 
   async createLimitOrder(symbol, side, amount, price) {
-    return await this.exchange.createOrder(
-      symbol,
-      "limit",
-      side,
-      amount,
-      price,
-    );
+    try {
+      // Round price to appropriate precision (2 decimals for most pairs)
+      const roundedPrice = Math.round(price * 100) / 100;
+
+      const params = {
+        symbol: symbol.replace("/", ""),
+        side: side.toUpperCase(),
+        type: "LIMIT",
+        quantity: amount,
+        price: roundedPrice,
+        timeInForce: "GTC",
+      };
+
+      const response = await this.exchange.fapiPrivatePostOrder(params);
+
+      return {
+        id: response.orderId.toString(),
+        symbol: symbol,
+        type: "limit",
+        side: side,
+        amount: parseFloat(response.origQty),
+        price: parseFloat(response.price),
+        status: response.status.toLowerCase(),
+        timestamp: response.updateTime,
+      };
+    } catch (error) {
+      console.error("createLimitOrder error:", error.message);
+      throw error;
+    }
   }
 
   async createStopLossOrder(symbol, side, amount, stopPrice, limitPrice) {
-    return await this.exchange.createOrder(
-      symbol,
-      "stop",
-      side,
-      amount,
-      limitPrice,
-      { stopPrice },
-    );
+    try {
+      const roundedStopPrice = Math.round(stopPrice * 100) / 100;
+
+      const params = {
+        symbol: symbol.replace("/", ""),
+        side: side.toUpperCase(),
+        algoType: "CONDITIONAL",
+        type: "STOP_MARKET",
+        orderType: "STOP_MARKET",
+        triggerPrice: roundedStopPrice,
+        closePosition: true, // Automatically closes entire position (no quantity needed)
+      };
+
+      const response = await this.exchange.fapiPrivatePostAlgoOrder(params);
+
+      return {
+        id: response.algoId
+          ? response.algoId.toString()
+          : response.orderId.toString(),
+        symbol: symbol,
+        type: "stop",
+        side: side,
+        amount: amount,
+        stopPrice: roundedStopPrice,
+        status: "new",
+        timestamp: Date.now(),
+      };
+    } catch (error) {
+      console.error("createStopLossOrder error:", error.message);
+      throw error;
+    }
   }
 
   async createTakeProfitOrder(symbol, side, amount, price) {
-    return await this.exchange.createOrder(
-      symbol,
-      "take_profit_limit",
-      side,
-      amount,
-      price,
-      { stopPrice: price },
-    );
+    try {
+      const roundedPrice = Math.round(price * 100) / 100;
+
+      const params = {
+        symbol: symbol.replace("/", ""),
+        side: side.toUpperCase(),
+        algoType: "CONDITIONAL",
+        type: "TAKE_PROFIT_MARKET",
+        orderType: "TAKE_PROFIT_MARKET",
+        triggerPrice: roundedPrice,
+        closePosition: true, // Automatically closes entire position (no quantity needed)
+      };
+
+      const response = await this.exchange.fapiPrivatePostAlgoOrder(params);
+
+      return {
+        id: response.algoId
+          ? response.algoId.toString()
+          : response.orderId.toString(),
+        symbol: symbol,
+        type: "take_profit",
+        side: side,
+        amount: amount,
+        stopPrice: roundedPrice,
+        status: "new",
+        timestamp: Date.now(),
+      };
+    } catch (error) {
+      console.error("createTakeProfitOrder error:", error.message);
+      throw error;
+    }
   }
 
   async cancelOrder(orderId, symbol) {
-    return await this.exchange.cancelOrder(orderId, symbol);
+    try {
+      // Check if this is an algo order (algoId is typically longer or string)
+      const isAlgoOrder = String(orderId).length > 12;
+
+      if (isAlgoOrder) {
+        const response = await this.exchange.fapiPrivateDeleteAlgoOrder({
+          symbol: symbol.replace("/", ""),
+          algoId: orderId,
+        });
+        return { id: orderId, status: "canceled" };
+      } else {
+        const response = await this.exchange.fapiPrivateDeleteOrder({
+          symbol: symbol.replace("/", ""),
+          orderId: orderId,
+        });
+        return { id: response.orderId.toString(), status: "canceled" };
+      }
+    } catch (error) {
+      console.error("cancelOrder error:", error.message);
+      throw error;
+    }
   }
 
   async getMarkPrice(symbol) {

@@ -45,20 +45,62 @@ class OrderExecutor {
     return this.activePosition;
   }
 
-  async executeDecision(decision, quantity) {
+  /**
+   * Smart order execution with LIMIT order + MARKET fallback
+   * @param {Object} decision - Trading decision with action, entry_price, stop_loss, take_profit
+   * @param {Number} quantity - Order quantity
+   * @param {Object} options - Execution options
+   * @returns {Object} Execution result
+   */
+  async executeDecision(decision, quantity, options = {}) {
     const { action, entry_price, stop_loss, take_profit } = decision;
+    const {
+      useLimitOrder = true,
+      limitTimeout = 30000, // 30 seconds
+      limitPriceOffset = 0.0005, // 0.05% better than market
+    } = options;
+
     try {
       await this.client.setLeverage(this.symbol, this.leverage);
 
       if (action === "BUY") {
-        const order = await this.client.createLimitOrder(
-          this.symbol,
+        // Step 1: Place entry order (LIMIT with MARKET fallback)
+        const entryResult = await this.placeSmartEntryOrder(
           "buy",
           quantity,
           entry_price,
+          { useLimitOrder, limitTimeout, limitPriceOffset },
         );
-        console.log("Buy order placed:", order);
 
+        if (!entryResult.success) {
+          console.error("Failed to open position:", entryResult.error);
+          return { success: false, error: entryResult.error };
+        }
+
+        console.log(
+          `✅ Position opened: ${entryResult.orderType} order filled at $${entryResult.fillPrice}`,
+        );
+
+        // Step 2: Wait for position to be confirmed
+        await this.sleep(2000);
+
+        // Step 3: Verify position exists before placing TP/SL
+        const position = await this.client.getPositions(this.symbol);
+        if (!position || position.contracts === 0) {
+          console.error(
+            "⚠️ Position not found after entry order. Skipping TP/SL.",
+          );
+          return {
+            success: true,
+            warning: "Position not confirmed, TP/SL not placed",
+          };
+        }
+
+        console.log(
+          `📊 Position confirmed: ${position.side} ${Math.abs(position.contracts)} @ $${position.entryPrice}`,
+        );
+
+        // Step 4: Place Stop Loss & Take Profit
         const stopLimitPrice = stop_loss * 0.999;
         const slOrder = await this.client.createStopLossOrder(
           this.symbol,
@@ -67,12 +109,15 @@ class OrderExecutor {
           stop_loss,
           stopLimitPrice,
         );
+        console.log(`🛑 Stop Loss placed at $${stop_loss}`);
+
         const tpOrder = await this.client.createTakeProfitOrder(
           this.symbol,
           "sell",
           quantity,
           take_profit,
         );
+        console.log(`🎯 Take Profit placed at $${take_profit}`);
 
         this.activePosition = {
           entryPrice: entry_price,
@@ -87,14 +132,43 @@ class OrderExecutor {
           trailingDistance: 0.01,
         };
       } else if (action === "SELL") {
-        const order = await this.client.createLimitOrder(
-          this.symbol,
+        // Step 1: Place entry order (LIMIT with MARKET fallback)
+        const entryResult = await this.placeSmartEntryOrder(
           "sell",
           quantity,
           entry_price,
+          { useLimitOrder, limitTimeout, limitPriceOffset },
         );
-        console.log("Sell order placed:", order);
 
+        if (!entryResult.success) {
+          console.error("Failed to open position:", entryResult.error);
+          return { success: false, error: entryResult.error };
+        }
+
+        console.log(
+          `✅ Position opened: ${entryResult.orderType} order filled at $${entryResult.fillPrice}`,
+        );
+
+        // Step 2: Wait for position to be confirmed
+        await this.sleep(2000);
+
+        // Step 3: Verify position exists before placing TP/SL
+        const position = await this.client.getPositions(this.symbol);
+        if (!position || position.contracts === 0) {
+          console.error(
+            "⚠️ Position not found after entry order. Skipping TP/SL.",
+          );
+          return {
+            success: true,
+            warning: "Position not confirmed, TP/SL not placed",
+          };
+        }
+
+        console.log(
+          `📊 Position confirmed: ${position.side} ${Math.abs(position.contracts)} @ $${position.entryPrice}`,
+        );
+
+        // Step 4: Place Stop Loss & Take Profit
         const stopLimitPrice = stop_loss * 1.001;
         const slOrder = await this.client.createStopLossOrder(
           this.symbol,
@@ -103,12 +177,15 @@ class OrderExecutor {
           stop_loss,
           stopLimitPrice,
         );
+        console.log(`🛑 Stop Loss placed at $${stop_loss}`);
+
         const tpOrder = await this.client.createTakeProfitOrder(
           this.symbol,
           "buy",
           quantity,
           take_profit,
         );
+        console.log(`🎯 Take Profit placed at $${take_profit}`);
 
         this.activePosition = {
           entryPrice: entry_price,
@@ -126,6 +203,156 @@ class OrderExecutor {
     } catch (error) {
       console.error("Execution error:", error);
     }
+  }
+
+  /**
+   * Smart entry order placement with LIMIT + MARKET fallback
+   * @param {String} side - 'buy' or 'sell'
+   * @param {Number} quantity - Order quantity
+   * @param {Number} targetPrice - Target entry price
+   * @param {Object} options - Execution options
+   * @returns {Object} Result with success, orderType, fillPrice
+   */
+  async placeSmartEntryOrder(side, quantity, targetPrice, options = {}) {
+    const { useLimitOrder, limitTimeout, limitPriceOffset } = options;
+
+    if (!useLimitOrder) {
+      // Use MARKET order directly
+      return await this.placeMarketEntry(side, quantity);
+    }
+
+    // Calculate LIMIT price (slightly better than market)
+    const limitPrice =
+      side === "buy"
+        ? targetPrice * (1 - limitPriceOffset) // Buy lower
+        : targetPrice * (1 + limitPriceOffset); // Sell higher
+
+    console.log(
+      `📝 Placing LIMIT ${side.toUpperCase()} order at $${limitPrice.toFixed(2)} (target: $${targetPrice.toFixed(2)})`,
+    );
+
+    try {
+      // Place LIMIT order
+      const limitOrder = await this.client.createLimitOrder(
+        this.symbol,
+        side,
+        quantity,
+        limitPrice,
+      );
+
+      console.log(
+        `⏳ Waiting up to ${limitTimeout / 1000}s for LIMIT order fill...`,
+      );
+
+      // Monitor order fill with timeout
+      const fillResult = await this.waitForOrderFill(
+        limitOrder.id,
+        limitTimeout,
+      );
+
+      if (fillResult.filled) {
+        console.log(`✅ LIMIT order filled at $${fillResult.fillPrice}`);
+        return {
+          success: true,
+          orderType: "LIMIT",
+          fillPrice: fillResult.fillPrice,
+          orderId: limitOrder.id,
+        };
+      }
+
+      // Order not filled - cancel and use MARKET
+      console.log(
+        `⚠️ LIMIT order not filled within ${limitTimeout / 1000}s, switching to MARKET...`,
+      );
+
+      try {
+        await this.client.cancelOrder(limitOrder.id, this.symbol);
+        console.log(`❌ LIMIT order cancelled`);
+      } catch (cancelError) {
+        console.log(
+          `⚠️ Could not cancel LIMIT order (may already be filled): ${cancelError.message}`,
+        );
+      }
+
+      // Fallback to MARKET order
+      return await this.placeMarketEntry(side, quantity);
+    } catch (error) {
+      console.error(
+        `❌ LIMIT order failed: ${error.message}, falling back to MARKET`,
+      );
+      return await this.placeMarketEntry(side, quantity);
+    }
+  }
+
+  /**
+   * Place MARKET order for entry
+   */
+  async placeMarketEntry(side, quantity) {
+    console.log(`🚀 Placing MARKET ${side.toUpperCase()} order...`);
+
+    try {
+      const marketOrder = await this.client.exchange.fapiPrivatePostOrder({
+        symbol: this.symbol.replace("/", ""),
+        side: side.toUpperCase(),
+        type: "MARKET",
+        quantity: quantity,
+      });
+
+      const ticker = await this.client.getTicker(this.symbol);
+      const fillPrice = ticker.last;
+
+      console.log(`✅ MARKET order executed at ~$${fillPrice}`);
+
+      return {
+        success: true,
+        orderType: "MARKET",
+        fillPrice: fillPrice,
+        orderId: marketOrder.orderId,
+      };
+    } catch (error) {
+      console.error(`❌ MARKET order failed: ${error.message}`);
+      return {
+        success: false,
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Wait for order to be filled
+   * @param {String} orderId - Order ID to monitor
+   * @param {Number} timeout - Max wait time in ms
+   * @returns {Object} Result with filled status and fillPrice
+   */
+  async waitForOrderFill(orderId, timeout) {
+    const startTime = Date.now();
+    const checkInterval = 2000; // Check every 2 seconds
+
+    while (Date.now() - startTime < timeout) {
+      await this.sleep(checkInterval);
+
+      try {
+        // Check if position exists (order filled)
+        const position = await this.client.getPositions(this.symbol);
+        if (position && position.contracts !== 0) {
+          return {
+            filled: true,
+            fillPrice: position.entryPrice,
+          };
+        }
+      } catch (error) {
+        console.error(`Error checking order fill: ${error.message}`);
+      }
+    }
+
+    return { filled: false };
+  }
+
+  /**
+   * Sleep helper
+   */
+  async sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   async updateTrailingStop(currentPrice) {

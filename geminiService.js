@@ -77,6 +77,12 @@ ${newsContext}
 === POSITION STATUS ===
 ${positionInfo}
 
+=== YOUR DECISION HISTORY ===
+${data.decisionHistory || "No previous decisions yet"}
+${data.consecutiveHolds > 2 ? `\n⚠️ WARNING: You've held ${data.consecutiveHolds} times in a row - consider if you're being too cautious` : ""}
+${data.lastAction === "POSITION_CLOSED" ? "\n💡 TIP: Position just closed - wait for clear setup before re-entering" : ""}
+${data.lastAction ? `Last action: ${data.lastAction}` : ""}
+
 ATURAN TRADING:
 1. **SENTIMENT ALIGNMENT**: Pertimbangkan news sentiment dalam keputusan
    - News BULLISH + Technical BULLISH = Strong BUY signal
@@ -113,6 +119,12 @@ ATURAN TRADING:
    - Minimal: 0.5x ATR
 
 8. **JIKA RAGU**: Pilih HOLD - preserving capital > forcing trades
+
+9. **CONSISTENCY & LEARNING**:
+   - Review your recent decisions - are you being consistent?
+   - If you held 3+ times in a row, ask: am I being too cautious or is market really bad?
+   - If you just opened a position, don't immediately reverse unless strong reason
+   - Learn from your decision pattern - avoid flip-flopping
 
 Output format JSON:
 {
