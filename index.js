@@ -2,6 +2,8 @@ require("dotenv").config();
 const BinanceClient = require("./binanceClient");
 const MarketData = require("./marketData");
 const GeminiService = require("./geminiService");
+const NewsService = require("./newsService");
+const PriceAlertService = require("./priceAlertService");
 const validateDecision = require("./validator");
 const calculatePositionSize = require("./riskManager");
 const OrderExecutor = require("./orderExecutor");
@@ -15,6 +17,7 @@ const logger = new Logger();
 const binanceClient = new BinanceClient(
   config.binance.apiKey,
   config.binance.apiSecret,
+  config.binance.baseURL,
 );
 const marketDataCollector = new MarketData(
   binanceClient,
@@ -24,6 +27,8 @@ const marketDataCollector = new MarketData(
   config.trading.atrPeriod,
 );
 const gemini = new GeminiService(config.gemini.apiKey);
+const newsService = new NewsService();
+const priceAlertService = new PriceAlertService(config.trading.symbol, 0.5);
 const orderExecutor = new OrderExecutor(
   binanceClient,
   config.trading.symbol,
@@ -35,18 +40,24 @@ const dailyLossLimit = new DailyLossLimit(
 );
 const circuitBreaker = new CircuitBreaker(5);
 
-const TelegramBot = require("node-telegram-bot-api");
+const { Bot } = require("grammy");
+
 let bot;
 if (config.telegram.token) {
-  bot = new TelegramBot(config.telegram.token, { polling: false });
+  bot = new Bot(config.telegram.token);
 }
 
 async function sendNotification(message) {
   if (bot && config.telegram.chatId) {
     try {
-      await bot.sendMessage(config.telegram.chatId, message);
+      await bot.api.sendMessage(config.telegram.chatId, message);
+      console.log("Telegram sent:", message.substring(0, 30) + "...");
     } catch (e) {
-      logger.error("Telegram send failed", e.message);
+      // Gramy memberikan error lebih detail
+      const errorMsg = e.description || e.message || "Unknown error";
+      console.error("Telegram send failed:", errorMsg);
+      // Jika Anda punya logger, bisa tetap gunakan:
+      // logger.error('Telegram send failed', errorMsg);
     }
   }
 }
@@ -91,7 +102,7 @@ setInterval(
   60 * 60 * 1000,
 );
 
-async function tradingJob() {
+async function tradingJob(isAlertTriggered = false) {
   if (circuitBreaker.isTripped()) {
     logger.warn("Circuit breaker tripped, skipping cycle");
     return;
@@ -103,12 +114,31 @@ async function tradingJob() {
   }
 
   try {
-    logger.info("Starting new cycle");
+    const cycleType = isAlertTriggered
+      ? "Alert-triggered cycle"
+      : "Regular cycle";
+    logger.info(`Starting ${cycleType}`);
 
     const marketData = await marketDataCollector.collect();
     dailyLossLimit.updateBalance(marketData.usdtBalance);
 
     await orderExecutor.syncPosition();
+
+    // Fetch latest news and sentiment
+    const news = await newsService.getLatestNews();
+    const newsContext = newsService.formatNewsForPrompt(news);
+    const sentiment = newsService.getSentimentSummary(news);
+
+    // Get recent price trend
+    const recentTrend = priceAlertService.getRecentTrend(5);
+    const volatility = priceAlertService.getVolatility();
+
+    // Add context to market data
+    marketData.newsContext = newsContext;
+    marketData.newsSentiment = sentiment.overall;
+    marketData.recentTrend = recentTrend;
+    marketData.volatility = volatility;
+    marketData.isAlertTriggered = isAlertTriggered;
 
     const prompt = gemini.buildPrompt(marketData);
     const decision = await gemini.getDecision(prompt);
@@ -157,5 +187,37 @@ async function tradingJob() {
   }
 }
 
-setInterval(tradingJob, 5 * 60 * 1000);
-setTimeout(tradingJob, 5000);
+// Price monitoring every 30 seconds
+let lastTradingAttempt = 0;
+const minTradingInterval = 2 * 60 * 1000; // Minimum 2 minutes between trading attempts
+
+setInterval(async () => {
+  try {
+    const ticker = await binanceClient.getTicker(config.trading.symbol);
+    const currentPrice = ticker.last;
+
+    // Check for significant price movement
+    const alert = priceAlertService.checkPriceMovement(currentPrice);
+
+    if (alert) {
+      logger.info(`Price Alert: ${alert.message}`);
+      await sendNotification(alert.message);
+
+      // Trigger trading check on significant movement (if enough time has passed)
+      const now = Date.now();
+      if (now - lastTradingAttempt >= minTradingInterval) {
+        logger.info(
+          "Significant price movement detected, triggering trading analysis...",
+        );
+        lastTradingAttempt = now;
+        setTimeout(() => tradingJob(true), 1000); // Pass true to indicate alert-triggered
+      }
+    }
+  } catch (error) {
+    // Silent fail for monitoring, don't spam logs
+  }
+}, 30 * 1000);
+
+// Regular trading cycle every 3 minutes (reduced from 5)
+setInterval(() => tradingJob(false), 3 * 60 * 1000);
+setTimeout(() => tradingJob(false), 5000);
