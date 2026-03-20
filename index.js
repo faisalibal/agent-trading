@@ -369,6 +369,35 @@ setInterval(async () => {
   }
 }, 30 * 1000); // Check every 30 seconds
 
-// Regular trading cycle every 3 minutes (reduced from 5)
-setInterval(() => tradingJob(false), 3 * 60 * 1000);
-setTimeout(() => tradingJob(false), 5000);
+// Dynamic trading cycle interval based on position status
+let tradingCycleInterval = null;
+
+function startTradingCycle() {
+  if (tradingCycleInterval) {
+    clearInterval(tradingCycleInterval);
+  }
+
+  // Check if we have active position
+  const hasPosition = orderExecutor.activePosition !== null;
+
+  // Dynamic interval:
+  // - With position: 30 seconds (AI can monitor and manage position)
+  // - Without position: 3 minutes (find new entry opportunities)
+  const interval = hasPosition ? 30 * 1000 : 3 * 60 * 1000;
+
+  console.log(
+    `Trading cycle interval: ${hasPosition ? "30 seconds (position active)" : "3 minutes (no position)"}`,
+  );
+
+  tradingCycleInterval = setInterval(() => {
+    tradingJob(false);
+    // Restart with updated interval after each cycle
+    setTimeout(() => startTradingCycle(), 1000);
+  }, interval);
+}
+
+// Start initial cycle
+setTimeout(() => {
+  tradingJob(false);
+  startTradingCycle();
+}, 5000);
