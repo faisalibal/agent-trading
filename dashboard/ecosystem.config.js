@@ -4,7 +4,7 @@ module.exports = {
       name: "trading-dashboard",
       script: "npm",
       args: "start",
-      cwd: "/Users/xvp4g7fjfk/File/workplace/code/kadintek/agent-trading/dashboard",
+      // cwd akan otomatis menggunakan directory tempat file ini berada
       instances: 1,
       autorestart: true,
       watch: false,
