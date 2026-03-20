@@ -1,0 +1,66 @@
+@import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=VT323&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    border-color: theme('colors.terminal.border');
+  }
+
+  body {
+    @apply bg-terminal-bg text-terminal-text font-mono antialiased;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-terminal-bg;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-terminal-border rounded-full;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-terminal-muted;
+  }
+}
+
+@layer components {
+  .card-glow {
+    box-shadow: 0 0 1px rgba(0, 212, 255, 0.1), inset 0 0 1px rgba(0, 212, 255, 0.05);
+  }
+  .card-glow:hover {
+    box-shadow: 0 0 8px rgba(0, 212, 255, 0.15), inset 0 0 2px rgba(0, 212, 255, 0.08);
+  }
+
+  .status-dot {
+    @apply w-2 h-2 rounded-full inline-block;
+  }
+  .status-dot-live {
+    @apply bg-terminal-green;
+    box-shadow: 0 0 6px rgba(0, 255, 136, 0.6);
+  }
+
+  .scanline {
+    background: linear-gradient(
+      to bottom,
+      transparent 50%,
+      rgba(0, 0, 0, 0.03) 50%
+    );
+    background-size: 100% 4px;
+    pointer-events: none;
+  }
+
+  .text-glow-green {
+    text-shadow: 0 0 8px rgba(0, 255, 136, 0.4);
+  }
+  .text-glow-red {
+    text-shadow: 0 0 8px rgba(255, 59, 92, 0.4);
+  }
+  .text-glow-cyan {
+    text-shadow: 0 0 8px rgba(0, 212, 255, 0.4);
+  }
+}
