@@ -110,10 +110,11 @@ async function tradingJob(isAlertTriggered = false) {
     return;
   }
 
-  if (!dailyLossLimit.canTrade()) {
-    logger.warn("Daily loss limit reached, skipping cycle");
-    return;
-  }
+  // Daily loss limit disabled - allow continuous trading
+  // if (!dailyLossLimit.canTrade()) {
+  //   logger.warn("Daily loss limit reached, skipping cycle");
+  //   return;
+  // }
 
   try {
     const cycleType = isAlertTriggered

@@ -239,19 +239,16 @@ class BinanceClient {
       const params = {
         symbol: symbol.replace("/", ""),
         side: side.toUpperCase(),
-        algoType: "CONDITIONAL",
         type: "STOP_MARKET",
-        orderType: "STOP_MARKET",
-        triggerPrice: roundedStopPrice,
-        closePosition: true, // Automatically closes entire position (no quantity needed)
+        stopPrice: roundedStopPrice,
+        closePosition: "true",
+        timeInForce: "GTC",
       };
 
-      const response = await this.exchange.fapiPrivatePostAlgoOrder(params);
+      const response = await this.exchange.fapiPrivatePostOrder(params);
 
       return {
-        id: response.algoId
-          ? response.algoId.toString()
-          : response.orderId.toString(),
+        id: response.orderId.toString(),
         symbol: symbol,
         type: "stop",
         side: side,
@@ -273,19 +270,16 @@ class BinanceClient {
       const params = {
         symbol: symbol.replace("/", ""),
         side: side.toUpperCase(),
-        algoType: "CONDITIONAL",
         type: "TAKE_PROFIT_MARKET",
-        orderType: "TAKE_PROFIT_MARKET",
-        triggerPrice: roundedPrice,
-        closePosition: true, // Automatically closes entire position (no quantity needed)
+        stopPrice: roundedPrice,
+        closePosition: "true",
+        timeInForce: "GTC",
       };
 
-      const response = await this.exchange.fapiPrivatePostAlgoOrder(params);
+      const response = await this.exchange.fapiPrivatePostOrder(params);
 
       return {
-        id: response.algoId
-          ? response.algoId.toString()
-          : response.orderId.toString(),
+        id: response.orderId.toString(),
         symbol: symbol,
         type: "take_profit",
         side: side,
@@ -302,22 +296,11 @@ class BinanceClient {
 
   async cancelOrder(orderId, symbol) {
     try {
-      // Check if this is an algo order (algoId is typically longer or string)
-      const isAlgoOrder = String(orderId).length > 12;
-
-      if (isAlgoOrder) {
-        const response = await this.exchange.fapiPrivateDeleteAlgoOrder({
-          symbol: symbol.replace("/", ""),
-          algoId: orderId,
-        });
-        return { id: orderId, status: "canceled" };
-      } else {
-        const response = await this.exchange.fapiPrivateDeleteOrder({
-          symbol: symbol.replace("/", ""),
-          orderId: orderId,
-        });
-        return { id: response.orderId.toString(), status: "canceled" };
-      }
+      const response = await this.exchange.fapiPrivateDeleteOrder({
+        symbol: symbol.replace("/", ""),
+        orderId: orderId,
+      });
+      return { id: response.orderId.toString(), status: "canceled" };
     } catch (error) {
       console.error("cancelOrder error:", error.message);
       throw error;
@@ -325,8 +308,17 @@ class BinanceClient {
   }
 
   async getMarkPrice(symbol) {
-    const ticker = await this.exchange.fetchTicker(symbol);
-    return ticker.last;
+    try {
+      const response = await this.exchange.fapiPublicGetTickerPrice({
+        symbol: symbol.replace("/", ""),
+      });
+      return parseFloat(response.price);
+    } catch (error) {
+      console.error("getMarkPrice error:", error.message);
+      // Fallback to getTicker
+      const ticker = await this.getTicker(symbol);
+      return ticker.last;
+    }
   }
 }
 

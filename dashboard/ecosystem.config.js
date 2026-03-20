@@ -12,6 +12,7 @@ module.exports = {
       env: {
         NODE_ENV: "production",
         PORT: 3939,
+        LOGS_PATH: "../logs",
       },
       error_file: "./logs/dashboard-error.log",
       out_file: "./logs/dashboard-out.log",
