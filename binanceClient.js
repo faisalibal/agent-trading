@@ -8,8 +8,11 @@ class BinanceClient {
       apiKey,
       secret: apiSecret,
       enableRateLimit: true,
+      rateLimit: 500,
       options: {
         defaultType: "future",
+        adjustForTimeDifference: true,
+        recvWindow: 60000,
       },
     };
 
@@ -29,6 +32,12 @@ class BinanceClient {
         dapiPublic: testnetBase + "/dapi/v1",
         dapiPrivate: testnetBase + "/dapi/v1",
       };
+
+      // Prevent CCXT from auto-loading markets which hits SAPI endpoints
+      // SAPI is not supported on testnet and causes rate limit issues
+      this.exchange.options["checkOrderWhenCanceling"] = false;
+      this.exchange.options["fetchCurrencies"] = false;
+      this.exchange.options["fetchMarkets"] = false;
     }
   }
 
