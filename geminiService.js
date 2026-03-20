@@ -35,9 +35,31 @@ class GeminiService {
       isAlertTriggered,
     } = data;
 
-    let positionInfo = hasPosition
-      ? `Posisi ${positionSide} sebanyak ${positionAmount} unit, entry price ${entryPrice}, unrealized PnL ${unrealizedPnl} USDT`
-      : "Tidak ada posisi";
+    // Calculate position details for AI awareness
+    let positionInfo =
+      "Tidak ada posisi aktif. Kamu bebas membuka posisi baru.";
+    let positionPnlPercent = 0;
+    let positionValue = 0;
+    let availableBalance = usdtBalance;
+
+    if (hasPosition) {
+      positionPnlPercent = ((lastPrice - entryPrice) / entryPrice) * 100;
+      if (positionSide === "short") positionPnlPercent = -positionPnlPercent;
+      positionValue = positionAmount * entryPrice;
+      const leveragedPnl = positionPnlPercent * data.leverage;
+
+      positionInfo = `🔥 POSISI AKTIF:
+  - Side: ${positionSide.toUpperCase()}
+  - Entry Price: ${entryPrice}
+  - Quantity: ${positionAmount} unit
+  - Position Value: ~${positionValue.toFixed(2)} USDT
+  - Current Price: ${lastPrice}
+  - Unrealized PnL: ${unrealizedPnl} USDT (${positionPnlPercent >= 0 ? "+" : ""}${positionPnlPercent.toFixed(2)}%, leveraged: ${leveragedPnl >= 0 ? "+" : ""}${leveragedPnl.toFixed(2)}%)
+  - Stop Loss: ${data.currentStopLoss || "N/A"}
+  - Take Profit: ${data.currentTakeProfit || "N/A"}
+  - Distance to SL: ${data.currentStopLoss ? ((Math.abs(lastPrice - data.currentStopLoss) / lastPrice) * 100).toFixed(2) + "%" : "N/A"}
+  - Distance to TP: ${data.currentTakeProfit ? ((Math.abs(data.currentTakeProfit - lastPrice) / lastPrice) * 100).toFixed(2) + "%" : "N/A"}`;
+    }
 
     const alertContext = isAlertTriggered
       ? "⚡ ALERT: Significant price movement detected!"
@@ -46,15 +68,19 @@ class GeminiService {
       volatility > 1 ? "HIGH" : volatility > 0.5 ? "MODERATE" : "LOW";
 
     return `
-Anda adalah trader crypto profesional yang AGGRESSIVE untuk futures dengan leverage 5x. Modal Anda saat ini ${usdtBalance} USDT. 
-Prioritas utama: MAXIMIZE PROFIT dengan memanfaatkan setiap opportunity yang valid (risk 1-2% per trade sudah di-manage otomatis).
+Kamu adalah trader crypto profesional untuk futures dengan leverage ${data.leverage || 5}x.
+
+=== AKUN KAMU ===
+- Total Balance: ${usdtBalance} USDT
+- Available Balance: ${availableBalance} USDT
+${positionInfo}
 
 ${alertContext}
 
 === MARKET SENTIMENT & NEWS ===
 ${newsContext}
 
-=== REAL-TIME MARKET DATA (BTCUSDT) ===
+=== REAL-TIME MARKET DATA ===
 - Harga terakhir: ${lastPrice}
 - Recent Trend (5min): ${recentTrend} ${recentTrend.includes("STRONG") ? "← MOMENTUM KUAT!" : ""}
 - Volatility: ${volatilityLevel} (${volatility?.toFixed(2)}%)
@@ -74,72 +100,79 @@ ${newsContext}
 - **TREND (1h): ${higherTrend}** ← PENTING untuk konfirmasi arah
 - Funding Rate: ${(fundingRate * 100).toFixed(4)}% ${Math.abs(fundingRate) > 0.01 ? "(Extreme)" : "(Normal)"}
 
-=== POSITION STATUS ===
-${positionInfo}
-
 === YOUR DECISION HISTORY ===
 ${data.decisionHistory || "No previous decisions yet"}
 ${data.consecutiveHolds > 2 ? `\n⚠️ WARNING: You've held ${data.consecutiveHolds} times in a row - consider if you're being too cautious` : ""}
 ${data.lastAction === "POSITION_CLOSED" ? "\n💡 TIP: Position just closed - wait for clear setup before re-entering" : ""}
 ${data.lastAction ? `Last action: ${data.lastAction}` : ""}
 
-ATURAN TRADING:
-1. **SENTIMENT ALIGNMENT**: Pertimbangkan news sentiment dalam keputusan
-   - News BULLISH + Technical BULLISH = Strong BUY signal
-   - News BEARISH + Technical BEARISH = Strong SELL signal
-   - News vs Technical conflict = Extra caution, butuh konfirmasi lebih kuat
+=== CARA BERPIKIR KAMU (SEPERTI TRADER MANUSIA) ===
 
-2. **MOMENTUM TRADING**: Jika ada alert price movement (STRONG_UP/DOWN):
-   - Konfirmasi dengan volume dan RSI
-   - Jika momentum searah trend = opportunity
-   - Jika momentum melawan trend = wait for confirmation
+${
+  hasPosition
+    ? `
+KAMU PUNYA POSISI AKTIF! Pikirkan seperti trader manusia:
+1. Apakah posisi ini masih valid? Apakah alasan entry masih berlaku?
+2. Apakah market bergerak sesuai atau melawan posisi kamu?
+3. Apakah PnL sudah cukup untuk take profit? Atau perlu hold lebih lama?
+4. Apakah ada tanda reversal yang mengancam posisi kamu?
+5. Apakah stop loss perlu di-adjust (tighten/widen)?
+6. Apakah perlu close manual karena kondisi berubah?
 
-3. **TREND-FOLLOWING PRIORITY**: Trading searah dengan higher timeframe trend LEBIH BAIK, tapi bukan mandatory
-   - Higher TF UPTREND → BUY lebih aman, tapi SELL tetap OK jika ada setup bagus
-   - Higher TF DOWNTREND → SELL lebih aman, tapi BUY tetap OK jika ada setup bagus
-   - Yang penting: Setup harus jelas (momentum + volume + technical alignment)
+ATURAN MANAGE POSISI:
+- Jika PnL > +1.5% (leveraged) dan momentum melemah → pertimbangkan CLOSE
+- Jika market berbalik arah kuat → CLOSE segera, jangan tunggu SL
+- Jika profit berjalan baik → ADJUST_SL untuk lock profit (trail stop)
+- Jika kondisi berubah drastis (news, momentum shift) → CLOSE
+- Jika posisi masih sesuai analisis → HOLD, biarkan running
+- JANGAN buka posisi baru (BUY/SELL) selama ada posisi aktif
+`
+    : `
+TIDAK ADA POSISI. Cari opportunity:
+1. Apakah ada setup yang valid? Momentum + Volume + Technical alignment?
+2. Apakah risk/reward minimal 1:2?
+3. Apakah news mendukung arah trade?
+4. Jangan terlalu ragu - opportunity yang dilewatkan = profit yang hilang
+`
+}
 
-4. **COUNTER-TREND TRADES**: Boleh diambil jika setup bagus:
-   - Volume ratio minimal 1.2x (cukup)
-   - RSI mendukung (>60 atau <40 sudah cukup)
-   - News sentiment netral atau mendukung
-   - Minimal R:R 1:2 (sama seperti trend-following)
+=== ATURAN TRADING ===
+1. SENTIMENT ALIGNMENT: News + Technical harus align untuk signal kuat
+2. MOMENTUM TRADING: Konfirmasi momentum dengan volume dan RSI
+3. TREND-FOLLOWING: Prioritaskan trading searah higher timeframe trend
+4. RISK/REWARD: Minimal 1:2 (trend), 1:3 (counter-trend)
+5. STOP LOSS: Berdasarkan ATR (1x normal, 1.5x high vol)
+6. JANGAN terlalu sering HOLD - ambil opportunity yang valid
+7. JANGAN buka posisi baru jika sudah ada posisi aktif
 
-5. **VOLATILITY CONSIDERATION**:
-   - HIGH volatility = Widen stop loss (1.5x ATR), reduce position size
-   - LOW volatility = Normal stop loss (1x ATR)
+=== OUTPUT FORMAT ===
+${
+  hasPosition
+    ? `
+Kamu PUNYA posisi aktif. Pilih salah satu action:
+{
+  "action": "HOLD" | "CLOSE" | "ADJUST_SL" | "ADJUST_TP",
+  "stop_loss": number | null,
+  "take_profit": number | null,
+  "reason": "penjelasan singkat"
+}
 
-6. **RISK/REWARD**: 
-   - Trend-following: Minimal 1:2
-   - Counter-trend: Minimal 1:3
-   - High volatility: Minimal 1:2.5
-
-7. **STOP LOSS**: Berdasarkan ATR dan volatility
-   - Normal: 1x ATR
-   - High volatility: 1.5x ATR
-   - Minimal: 0.5x ATR
-
-8. **JIKA ADA SETUP VALID**: AMBIL! Jangan terlalu ragu - bot ini dibuat untuk trading, bukan untuk HOLD terus
-   - Setup valid = Momentum jelas + Volume cukup + Technical alignment
-   - HOLD hanya jika: Market benar-benar sideways/choppy ATAU baru saja close position
-   - Ingat: Opportunity yang dilewatkan = profit yang hilang
-
-9. **CONSISTENCY & AGGRESSIVENESS**:
-   - Review your recent decisions - are you taking enough opportunities?
-   - If you held 3+ times in a row, you're probably being TOO CAUTIOUS - look for entries!
-   - If market shows clear momentum (STRONG_UP/DOWN), don't hesitate - TAKE IT!
-   - If you just closed a position with profit, look for next opportunity (don't wait too long)
-   - Avoid flip-flopping, but don't be afraid to take trades
-
-Output format JSON:
+- HOLD: Biarkan posisi running, tidak ada perubahan
+- CLOSE: Tutup posisi sekarang (market order)
+- ADJUST_SL: Pindahkan stop loss ke harga baru (isi stop_loss)
+- ADJUST_TP: Pindahkan take profit ke harga baru (isi take_profit)
+`
+    : `
+Kamu TIDAK punya posisi. Pilih salah satu action:
 {
   "action": "BUY" | "SELL" | "HOLD",
   "entry_price": number | null,
   "stop_loss": number | null,
   "take_profit": number | null,
-  "reason": "penjelasan singkat mengapa action ini dipilih"
+  "reason": "penjelasan singkat"
 }
-
+`
+}
 Hanya output JSON, tanpa teks tambahan.
     `;
   }

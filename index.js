@@ -76,6 +76,27 @@ async function sendNotification(message) {
     dailyLossLimit.initialBalance = usdt;
     dailyLossLimit.currentBalance = usdt;
     logger.info(`Initial balance: ${usdt} USDT`);
+
+    // Sync existing positions on startup
+    const existingPosition = await orderExecutor.syncPosition();
+    if (existingPosition) {
+      logger.info("Existing position detected on startup", {
+        side: existingPosition.side,
+        quantity: existingPosition.quantity,
+        entryPrice: existingPosition.entryPrice,
+        stopLoss: existingPosition.stopLoss,
+        takeProfit: existingPosition.takeProfit,
+      });
+      await sendNotification(
+        `🔄 Bot restarted - existing ${existingPosition.side.toUpperCase()} position detected\n` +
+          `Entry: ${existingPosition.entryPrice}\n` +
+          `Qty: ${existingPosition.quantity}\n` +
+          `SL: ${existingPosition.stopLoss || "N/A"}\n` +
+          `TP: ${existingPosition.takeProfit || "N/A"}`,
+      );
+    } else {
+      logger.info("No existing position found on startup");
+    }
   } catch (e) {
     logger.error("Init error", e.message);
     process.exit(1);
@@ -142,6 +163,13 @@ async function tradingJob(isAlertTriggered = false) {
     marketData.recentTrend = recentTrend;
     marketData.volatility = volatility;
     marketData.isAlertTriggered = isAlertTriggered;
+    marketData.leverage = config.trading.leverage;
+
+    // Add current position SL/TP info for AI awareness
+    if (orderExecutor.activePosition) {
+      marketData.currentStopLoss = orderExecutor.activePosition.stopLoss;
+      marketData.currentTakeProfit = orderExecutor.activePosition.takeProfit;
+    }
 
     // Add decision history context
     marketData.decisionHistory = decisionHistory.formatForPrompt();
@@ -163,6 +191,59 @@ async function tradingJob(isAlertTriggered = false) {
     const currentPrice = marketData.lastPrice;
     decisionHistory.addDecision(validated, currentPrice, validated.reason);
 
+    // === Handle CLOSE action ===
+    if (validated.action === "CLOSE") {
+      const result = await orderExecutor.closePositionMarket();
+      if (result.success) {
+        logger.info("Position closed by AI", { reason: validated.reason });
+        await sendNotification(
+          `🔒 Position CLOSED by AI\nReason: ${validated.reason}`,
+        );
+        decisionHistory.addDecision(
+          { action: "POSITION_CLOSED" },
+          currentPrice,
+          validated.reason,
+        );
+      } else {
+        logger.error("Failed to close position", result.error);
+      }
+    }
+
+    // === Handle ADJUST_SL action ===
+    if (validated.action === "ADJUST_SL") {
+      const result = await orderExecutor.adjustStopLoss(validated.stop_loss);
+      if (result.success) {
+        logger.info("Stop loss adjusted by AI", {
+          newSL: validated.stop_loss,
+          reason: validated.reason,
+        });
+        await sendNotification(
+          `🛑 SL adjusted to $${validated.stop_loss}\nReason: ${validated.reason}`,
+        );
+      } else {
+        logger.error("Failed to adjust SL", result.error);
+      }
+    }
+
+    // === Handle ADJUST_TP action ===
+    if (validated.action === "ADJUST_TP") {
+      const result = await orderExecutor.adjustTakeProfit(
+        validated.take_profit,
+      );
+      if (result.success) {
+        logger.info("Take profit adjusted by AI", {
+          newTP: validated.take_profit,
+          reason: validated.reason,
+        });
+        await sendNotification(
+          `🎯 TP adjusted to $${validated.take_profit}\nReason: ${validated.reason}`,
+        );
+      } else {
+        logger.error("Failed to adjust TP", result.error);
+      }
+    }
+
+    // === Handle BUY/SELL action (new position) ===
     if (
       (validated.action === "BUY" || validated.action === "SELL") &&
       !marketData.hasPosition
@@ -176,7 +257,6 @@ async function tradingJob(isAlertTriggered = false) {
         config.trading.leverage,
       );
       if (quantity > 0) {
-        // Pass smart order execution options
         const executionOptions = {
           useLimitOrder: config.trading.useLimitOrder,
           limitTimeout: config.trading.limitTimeout,
@@ -189,7 +269,7 @@ async function tradingJob(isAlertTriggered = false) {
           executionOptions,
         );
         await sendNotification(
-          `🚀 Order executed: ${validated.action} ${quantity} at ${validated.entry_price}`,
+          `🚀 ${validated.action} ${quantity} @ $${validated.entry_price}\nSL: $${validated.stop_loss} | TP: $${validated.take_profit}\nReason: ${validated.reason}`,
         );
         logger.info("Order executed", {
           action: validated.action,

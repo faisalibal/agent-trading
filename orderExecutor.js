@@ -422,6 +422,124 @@ class OrderExecutor {
     }
   }
 
+  async closePositionMarket() {
+    if (!this.activePosition)
+      return { success: false, error: "No active position" };
+
+    try {
+      const pos = this.activePosition;
+      const closeSide = pos.side === "long" ? "sell" : "buy";
+
+      // Cancel existing SL/TP orders first
+      if (pos.stopLossOrderId) {
+        try {
+          await this.client.cancelOrder(pos.stopLossOrderId, this.symbol);
+          console.log("❌ Cancelled existing SL order");
+        } catch (e) {
+          console.warn("Could not cancel SL order:", e.message);
+        }
+      }
+      if (pos.takeProfitOrderId) {
+        try {
+          await this.client.cancelOrder(pos.takeProfitOrderId, this.symbol);
+          console.log("❌ Cancelled existing TP order");
+        } catch (e) {
+          console.warn("Could not cancel TP order:", e.message);
+        }
+      }
+
+      // Close with market order
+      await this.client.exchange.fapiPrivatePostOrder({
+        symbol: this.symbol.replace("/", ""),
+        side: closeSide.toUpperCase(),
+        type: "MARKET",
+        quantity: pos.quantity,
+      });
+
+      console.log(`✅ Position closed: ${pos.side} ${pos.quantity} @ market`);
+      this.activePosition = null;
+      return { success: true };
+    } catch (error) {
+      console.error("closePositionMarket error:", error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async adjustStopLoss(newStopLoss) {
+    if (!this.activePosition)
+      return { success: false, error: "No active position" };
+
+    try {
+      const pos = this.activePosition;
+      const closeSide = pos.side === "long" ? "sell" : "buy";
+
+      // Cancel old SL order
+      if (pos.stopLossOrderId) {
+        try {
+          await this.client.cancelOrder(pos.stopLossOrderId, this.symbol);
+          console.log("❌ Cancelled old SL order");
+        } catch (e) {
+          console.warn("Could not cancel old SL:", e.message);
+        }
+      }
+
+      // Place new SL order
+      const newSlOrder = await this.client.createStopLossOrder(
+        this.symbol,
+        closeSide,
+        pos.quantity,
+        newStopLoss,
+        newStopLoss * (pos.side === "long" ? 0.999 : 1.001),
+      );
+
+      pos.stopLossOrderId = newSlOrder.id;
+      pos.stopLoss = newStopLoss;
+
+      console.log(`🛑 Stop Loss adjusted to $${newStopLoss}`);
+      return { success: true, stopLoss: newStopLoss };
+    } catch (error) {
+      console.error("adjustStopLoss error:", error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async adjustTakeProfit(newTakeProfit) {
+    if (!this.activePosition)
+      return { success: false, error: "No active position" };
+
+    try {
+      const pos = this.activePosition;
+      const closeSide = pos.side === "long" ? "sell" : "buy";
+
+      // Cancel old TP order
+      if (pos.takeProfitOrderId) {
+        try {
+          await this.client.cancelOrder(pos.takeProfitOrderId, this.symbol);
+          console.log("❌ Cancelled old TP order");
+        } catch (e) {
+          console.warn("Could not cancel old TP:", e.message);
+        }
+      }
+
+      // Place new TP order
+      const newTpOrder = await this.client.createTakeProfitOrder(
+        this.symbol,
+        closeSide,
+        pos.quantity,
+        newTakeProfit,
+      );
+
+      pos.takeProfitOrderId = newTpOrder.id;
+      pos.takeProfit = newTakeProfit;
+
+      console.log(`🎯 Take Profit adjusted to $${newTakeProfit}`);
+      return { success: true, takeProfit: newTakeProfit };
+    } catch (error) {
+      console.error("adjustTakeProfit error:", error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
   async closePosition() {
     if (this.activePosition) {
       if (this.activePosition.stopLossOrderId) {
