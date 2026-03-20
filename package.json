@@ -1,0 +1,20 @@
+{
+  "name": "crypto-trader-ai",
+  "version": "3.0.0",
+  "description": "AI-powered crypto trading bot for Binance Futures with advanced risk management",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "@google/genai": "^0.8.0",
+    "ccxt": "^4.5.44",
+    "dotenv": "^16.4.7",
+    "node-telegram-bot-api": "^0.67.0",
+    "technicalindicators": "^3.1.1"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.0"
+  }
+}
